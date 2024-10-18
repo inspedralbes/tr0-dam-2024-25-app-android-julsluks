@@ -50,25 +50,10 @@ class MainActivity : ComponentActivity() {
             MyQuizGameTheme {
                 val navController = rememberNavController()
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-
+                    NavigationGraph(navController = navController, innerPadding = innerPadding)
                 }
             }
         }
     }
 }
 
-@Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-    Text(
-        text = "Hello $name!",
-        modifier = modifier
-    )
-}
-
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-    MyQuizGameTheme {
-        Greeting("Android")
-    }
-}
