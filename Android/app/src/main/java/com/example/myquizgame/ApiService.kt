@@ -22,5 +22,5 @@ interface ApiService {
     fun getQuestions(): Call<QuestionsResponse>
 
     @POST("/preguntesPartida")
-    fun questionsGame(@Body partidaRequest: Map<String, String>): Call<EndGameResponse>
+    fun questionsGame(@Body gameRequest: Map<String, String>): Call<EndGameResponse>
 }
