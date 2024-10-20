@@ -1,6 +1,4 @@
-import com.example.myquizgame.Question
-
-data class EndGameResponse(
-    val sessionToken: String,
-    val questions: List<Question>
+data class EndGameResponse (
+    val correctAnswers: Int,
+    val incorrectAnswers: Int
 )

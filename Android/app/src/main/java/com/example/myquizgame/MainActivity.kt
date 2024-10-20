@@ -1,5 +1,6 @@
 package com.example.myquizgame
 
+import EndGameRequest
 import EndGameResponse
 import android.os.Bundle
 import android.util.Log
@@ -27,6 +28,8 @@ import retrofit2.Call
 import retrofit2.Callback
 import retrofit2.Response
 import coil.compose.AsyncImage
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 
 class MainActivity : ComponentActivity() {
     lateinit var apiService: ApiService
@@ -66,10 +69,17 @@ fun NavigationGraph(navController: NavHostController) {
         composable("GameScreen") {
             GameScreen(navController = navController)
         }
-        composable("EndGameScreen/{score}") { backStackEntry ->
-            val score = backStackEntry.arguments?.getString("score")?.toInt() ?: 0
-            EndGameScreen(navController = navController, score = score)
+        composable("EndGameScreen/{sessionToken}/{questionsJson}/{answersJson}") { backStackEntry ->
+            val sessionToken = backStackEntry.arguments?.getString("sessionToken") ?: ""
+            val questionsJson = backStackEntry.arguments?.getString("questionsJson") ?: "[]"
+            val answersJson = backStackEntry.arguments?.getString("answersJson") ?: "[]"
+
+            val questions: List<Question> = parseQuestionsJson(questionsJson)
+            val answers: List<AnswerRequest> = parseAnswersJson(answersJson)
+
+            EndGameScreen(navController, sessionToken, questions, answers)
         }
+
     }
 }
 
@@ -92,136 +102,171 @@ fun StartScreen (navController: NavController) {
 
 @Composable
 fun GameScreen(navController: NavController) {
-    var clickCount by remember { mutableStateOf(0) }
-    var questions by remember { mutableStateOf<List<Question>>(emptyList())}
+    var sessionToken by remember { mutableStateOf("") }
+    var questions by remember { mutableStateOf<List<Question>>(emptyList()) }
     var currentQuestion by remember { mutableStateOf(0) }
-    var errorMessage by remember { mutableStateOf<String?>(null)}
-    var isLoading by remember { mutableStateOf(true)}
-    val score by remember { mutableStateOf(0) }
-    var timeLeft by remember { mutableStateOf(30) }
-    var isTimeRunning by remember { mutableStateOf(true) }
+    var isLoading by remember { mutableStateOf(true) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var answersRequest = remember { mutableStateListOf<Pair<Int, Int>>() }
 
     val context = LocalContext.current as MainActivity
-    val sessionToken = "some-session-token"
-    val gameRequest = mapOf("sessionToken" to sessionToken)
 
-    LaunchedEffect (Unit) {
-        context.apiService.questionsGame(gameRequest).enqueue(object : Callback<EndGameResponse> {
-            override fun onResponse(call: Call<EndGameResponse>, response: Response<EndGameResponse>) {
+    // Cargar las preguntas desde la API
+    LaunchedEffect(Unit) {
+        context.apiService.getQuestions().enqueue(object : Callback<QuestionsResponse> {
+            override fun onResponse(call: Call<QuestionsResponse>, response: Response<QuestionsResponse>) {
                 if (response.isSuccessful) {
+                    sessionToken = response.body()?.sessionToken ?: ""
                     questions = response.body()?.questions ?: emptyList()
-                    currentQuestion = 0
                     errorMessage = null
-                    isLoading = false
                 } else {
-                    Log.e("GameScreen", "Error loading questions. Code: ${response.code()}")
                     errorMessage = "Error loading questions. Code: ${response.code()}"
-                    isLoading = false
                 }
+                isLoading = false
             }
 
-            override fun onFailure(call: Call<EndGameResponse>, t: Throwable) {
-                Log.e("GameScreen", "Error in request: ${t.message}")
+            override fun onFailure(call: Call<QuestionsResponse>, t: Throwable) {
                 errorMessage = "Error in request: ${t.message}"
                 isLoading = false
             }
         })
     }
 
-    LaunchedEffect (currentQuestion, isTimeRunning) {
-        timeLeft = 30
-        isTimeRunning = true
-
-        while (isTimeRunning && timeLeft > 0) {
-            kotlinx.coroutines.delay(1000L)
-            timeLeft--
-        }
-
-        if (timeLeft == 0 && isTimeRunning) {
-            if (currentQuestion < questions.size - 1) {
-                currentQuestion++
-            } else {
-                navController.navigate("EndGameScreen/$score")
-            }
-        }
-    }
-
     if (isLoading) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
-        ) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(text = "Loading...")
         }
     } else if (errorMessage != null) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(text = errorMessage.toString())
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(text = errorMessage!!)
         }
     } else if (questions.isNotEmpty()) {
         val currentQuestionObj = questions[currentQuestion]
 
-        Box(
-            modifier = Modifier.fillMaxSize().padding(16.dp),
-            contentAlignment = Alignment.Center
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.fillMaxSize().padding(16.dp)
         ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(text = "Question ${currentQuestion + 1}/${questions.size}")
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(text = "Time left: $timeLeft seconds")
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(text = currentQuestionObj.question, modifier = Modifier.padding(bottom = 16.dp))
-                AsyncImage(
-                    model = currentQuestionObj.image,
-                    contentDescription = "Image of the question",
-                    modifier = Modifier.height(200.dp).fillMaxWidth()
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                currentQuestionObj.answers.forEachIndexed { index, answer ->
-                    Button(
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = {
-                            isTimeRunning = false
-                            clickCount++
+            Text(text = "Question ${currentQuestion + 1}/${questions.size}")
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(text = currentQuestionObj.question)
 
-                            if (clickCount >= 10 || currentQuestion >= questions.size - 1) {
-                                navController.navigate("EndGameScreen/$score")
-                            } else {
-                                currentQuestion++
-                            }
+            currentQuestionObj.answers.forEach { answer ->
+                Button(
+                    onClick = {
+                        answersRequest.add(Pair(currentQuestionObj.id, answer.id))
+                        if (currentQuestion < questions.size - 1) {
+                            currentQuestion++
+                        } else {
+                            // Al terminar, navegamos a EndGameScreen con las preguntas y respuestas
+                            val answersJson = buildAnswersRequestJson(answersRequest)
+                            val questionsJson = buildQuestionsJson(questions)
+                            navController.navigate(
+                                "EndGameScreen/$sessionToken/$questionsJson/$answersJson"
+                            )
                         }
-                    ) {
-                        Text(text = answer)
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+                ) {
+                    Text(text = answer.answer)
                 }
             }
         }
     } else {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
-        ) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(text = "No questions available")
         }
     }
 }
 
 @Composable
-fun EndGameScreen (navController: NavController, score: Int) {
-    Column (verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxSize()) {
-        Text(text = "Game Over")
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(text = "Correct answers: $score")
+fun EndGameScreen(navController: NavController, sessionToken: String, questions: List<Question>, answers: List<AnswerRequest>) {
+    val context = LocalContext.current as MainActivity
+    var correctAnswers by remember { mutableStateOf(0) }
+    var incorrectAnswers by remember { mutableStateOf(0) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) {
+        val requestBody = EndGameRequest(sessionToken = sessionToken, questions = questions, answers = answers)
+        context.apiService.endGame(requestBody).enqueue(object : Callback<EndGameResponse> {
+            override fun onResponse(call: Call<EndGameResponse>, response: Response<EndGameResponse>) {
+                if (response.isSuccessful) {
+                    val result = response.body()
+                    correctAnswers = result?.correctAnswers ?: 0
+                    incorrectAnswers = result?.incorrectAnswers ?: 0
+                } else {
+                    errorMessage = "Error: ${response.code()}"
+                }
+            }
+
+            override fun onFailure(call: Call<EndGameResponse>, t: Throwable) {
+                errorMessage = "Request failed: ${t.message}"
+            }
+        })
+    }
+
+    Column(
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.fillMaxSize()
+    ) {
+        if (errorMessage != null) {
+            Text(text = errorMessage!!)
+        } else {
+            Text(text = "Game Over")
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(text = "Correct answers: $correctAnswers")
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(text = "Incorrect answers: $incorrectAnswers")
+        }
         Spacer(modifier = Modifier.height(16.dp))
         Button(onClick = { navController.navigate("StartScreen") }) {
             Text(text = "Restart Game")
         }
     }
+}
+
+fun buildQuestionsJson(questions: List<Question>): String {
+    val questionsList = questions.map { question ->
+        """{
+            "id": ${question.id},
+            "question": "${question.question}",
+            "answers": ${buildAnswersResponseJson(question.answers)},
+            "image": "${question.image}"
+        }"""
+    }
+    return questionsList.joinToString(",", "[", "]")
+}
+
+fun buildAnswersResponseJson(answers: List<AnswerResponse>): String {
+    val answersList = answers.map { answer ->
+        """{
+            "id": ${answer.id},
+            "answer": "${answer.answer}"
+        }"""
+    }
+    return answersList.joinToString(",", "[", "]")
+}
+
+fun buildAnswersRequestJson(answers: List<Pair<Int, Int>>): String {
+    val answersList = answers.map { answer ->
+        """{
+            "question": ${answer.first},
+            "answer": ${answer.second}
+        }"""
+        }
+    return answersList.joinToString(",", "[", "]")
+}
+
+fun parseQuestionsJson(json: String): List<Question> {
+    val gson = Gson()
+    val type = object : TypeToken<List<Question>>() {}.type
+    return gson.fromJson(json, type)
+}
+
+fun parseAnswersJson(json: String): List<AnswerRequest> {
+    val gson = Gson()
+    val type = object : TypeToken<List<AnswerRequest>>() {}.type
+    return gson.fromJson(json, type)
 }
